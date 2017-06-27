@@ -1,15 +1,20 @@
 import org.junit.*;
 import org.neo4j.driver.v1.*;
+import org.neo4j.driver.v1.exceptions.ClientException;
 import org.neo4j.harness.junit.EnterpriseNeo4jRule;
 import org.neo4j.harness.junit.Neo4jRule;
 
 import java.util.concurrent.TimeUnit;
 
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
+
 public class LdapTest {
 
     public Driver driver;
 
-    private final static Integer TIME_SEC = 1;
+    private final static Integer TIME_SEC = 2;
 
     @Rule
     public Neo4jRule neo4j = new EnterpriseNeo4jRule()
@@ -19,7 +24,7 @@ public class LdapTest {
             .withConfig("dbms.security.ldap.authorization.user_search_base", "cn=users,dc=example,dc=com")
             .withConfig("dbms.security.ldap.authorization.user_search_filter", "(&(objectClass=*)(cn={0}))")
             .withConfig("dbms.security.ldap.authorization.group_to_role_mapping", " 'cn=Neo4j Administrator,cn=Users,dc=example,dc=com'  = admin")
-            .withConfig("dbms.security.ldap.authentication.cache_enabled", "true").withConfig("dbms.security.auth_cache_ttl", TIME_SEC + "s");
+            .withConfig("dbms.security.ldap.authentication.cache_enabled", "false").withConfig("dbms.security.auth_cache_ttl", TIME_SEC + "s");
 
     @Before
     public void initDriver() {
@@ -37,10 +42,21 @@ public class LdapTest {
         this.driver = null;
     }
 
-    public void query_should_succeed() {
+    private void query_should_succeed() {
         try (Session session = this.driver.session()) {
             StatementResult rs = session.run("RETURN 1");
             Assert.assertEquals(1, rs.single().get(0).asInt());
+        }
+    }
+
+    private void query_should_not_succeed() {
+        try (Session session = this.driver.session()) {
+            StatementResult rs = session.run( "RETURN 1" );
+            if (rs.hasNext())
+                rs.next();
+            fail( "Should have failed with LDAP authorization info expired" );
+        } catch (ClientException e) {
+            assertThat( e.code(), equalTo( "Neo.ClientError.Security.AuthorizationExpired" ) );
         }
     }
 
@@ -53,6 +69,7 @@ public class LdapTest {
     @Test public void serial_queries_upper_than_ttl_should_work() throws InterruptedException {
         this.query_should_succeed();
         Thread.sleep(TIME_SEC * 1000 + 1);
+        query_should_not_succeed();
         this.query_should_succeed();
     }
 }
